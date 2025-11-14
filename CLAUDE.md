@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-QMesh v2 is a **distributed peer-to-peer LLM inference network** that enables consumer devices to share computational resources for running large language models.
+QMesh is a **distributed peer-to-peer LLM inference network** that enables consumer devices to share computational resources for running large language models.
 
 **Current Status:** Building PoC/MVP - focused on core P2P inference functionality without payments or complex prioritization.
 
@@ -77,6 +77,7 @@ Health states:
 | **P2P Network** | Hyperswarm | Peer discovery and messaging |
 | **Model Format** | GGUF | Quantized models (Q4_0, Q4_K_M, etc.) |
 | **GPU Acceleration** | Metal/CUDA/Vulkan | Auto-detected hardware acceleration |
+| **Interactive Setup** | @inquirer/prompts | CLI prompts for model selection |
 
 ## Development Commands
 
@@ -108,13 +109,15 @@ src/
 ├── worker/                 # Worker node implementation
 │   ├── worker-node.js     # Main orchestrator - coordinates all subsystems
 │   ├── model-loader.js    # GGUF model loading with GPU auto-detection
-│   └── inference-engine.js # LLM inference with streaming support
+│   ├── inference-engine.js # LLM inference with streaming support
+│   └── setup-wizard.js    # Interactive first-time setup
 ├── client/                 # Client SDK
 │   ├── qmesh-client.js    # Main client interface
 │   └── worker-selector.js  # Health-based worker selection
 ├── lib/                    # Shared libraries
 │   ├── network-manager.js  # Hyperswarm P2P networking
-│   └── system-monitor.js   # CPU/memory/load monitoring
+│   ├── system-monitor.js   # CPU/memory/load monitoring
+│   └── hardware-detector.js # GPU/RAM detection for model recommendations
 └── config/
     └── default.js         # Configuration (network topics, inference params)
 ```
@@ -125,6 +128,80 @@ src/
 - `lib/global-score-manager.js` - Network score sync
 - `lib/score-db.js` - Hyperbee persistence
 - `lib/model-distribution.js` - P2P model sharing
+
+## Worker Setup Experience
+
+QMesh uses simple interactive prompts to make setup easy for new workers.
+
+### First-Time Setup
+
+When a worker starts for the first time:
+
+```bash
+$ npm run worker
+
+🔍 Detecting hardware...
+  GPU: NVIDIA RTX 3060 (8GB VRAM) ✅
+  RAM: 16GB available
+  Disk: 45GB free
+
+? Choose a model to run:
+  ❯ Llama-3.2-7B-Q4 (4.8GB) - Recommended for your hardware
+    TinyLlama-1B-Q4 (1.2GB) - Faster, less capable
+    Custom model path...
+
+✔ Llama-3.2-7B-Q4 selected
+
+📥 Downloading model (4.8GB)...
+████████████████████ 100% - 2m 15s
+
+✅ Model ready! Starting worker...
+🌐 Joining P2P network...
+🟢 Worker active and accepting requests
+```
+
+### Hardware Detection
+
+The system automatically detects:
+- **GPU type**: Metal (macOS), CUDA (NVIDIA), Vulkan (AMD), or CPU-only
+- **Available VRAM**: For GPU acceleration
+- **System RAM**: To ensure model fits in memory
+- **Disk space**: For model storage
+
+### Model Recommendations
+
+Based on detected hardware:
+
+| Hardware | Recommended Model | Why |
+|----------|------------------|-----|
+| 8GB+ GPU | Llama-3.2-7B-Q4 | Good balance of speed and quality |
+| 4-8GB GPU | Llama-3.2-3B-Q4 | Fits comfortably, good performance |
+| No GPU / Low RAM | TinyLlama-1B-Q4 | CPU-friendly, fast inference |
+
+### Implementation
+
+Uses **@inquirer/prompts** for interactive CLI:
+```javascript
+import { select } from '@inquirer/prompts';
+
+const model = await select({
+  message: 'Choose a model:',
+  choices: [
+    {
+      name: 'Llama-3.2-7B-Q4 (4.8GB) - Recommended',
+      value: 'llama-7b',
+      description: 'Best for GPUs with 8GB+ VRAM'
+    },
+    {
+      name: 'TinyLlama-1B-Q4 (1.2GB)',
+      value: 'tiny',
+      description: 'Fast, works on CPU'
+    }
+  ]
+});
+```
+
+No complex UI needed - just simple, clear prompts.
 
 ## Key Implementation Patterns
 
@@ -182,6 +259,16 @@ mkdir models
 cd models
 wget https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
 ```
+
+### Hardware Detection
+
+The system detects hardware capabilities to recommend appropriate models:
+- **GPU detection**: Check for Metal (macOS), CUDA (NVIDIA), Vulkan (AMD)
+- **VRAM check**: Ensure GPU has enough memory for model
+- **System RAM**: Verify total RAM can fit model + overhead
+- **Disk space**: Check available space before downloading
+
+Workers are guided to select models that fit their hardware during first-time setup.
 
 ### Worker IDs
 - Each worker generates a persistent ID on first run (stored in `worker-id.txt`)
