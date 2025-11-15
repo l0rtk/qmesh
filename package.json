@@ -10,6 +10,7 @@
   "scripts": {
     "worker": "node examples/run-worker.js",
     "client": "node examples/basic-client.js",
+    "chat": "node examples/interactive-chat.js",
     "download": "node scripts/download-model.js",
     "test": "node --experimental-test-module-mocks --test tests/**/*.test.js",
     "test:unit": "node --test tests/unit/**/*.test.js",

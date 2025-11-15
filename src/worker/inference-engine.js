@@ -60,6 +60,12 @@ export class InferenceEngine {
     this.sessionTimeout = options.contextTimeout ?? config.model.contextPool.contextTimeout;
     this.sessionIdCounter = 0;
 
+    // System prompt for chat sessions
+    this.systemPrompt = options.systemPrompt || null;
+
+    // Dedicated chat session (for interactive chat)
+    this.chatSession = null;
+
     // Default inference parameters
     this.defaultParams = {
       contextSize: options.contextSize ?? config.model.inference.contextSize,
@@ -109,9 +115,16 @@ export class InferenceEngine {
       });
 
       // Create chat session (v3 API)
-      const session = new LlamaChatSession({
+      const sessionOptions = {
         contextSequence: context.getSequence(),
-      });
+      };
+
+      // Add systemPrompt if configured
+      if (this.systemPrompt) {
+        sessionOptions.systemPrompt = this.systemPrompt;
+      }
+
+      const session = new LlamaChatSession(sessionOptions);
 
       const managedSession = new ManagedSession(context, session, sessionId);
       managedSession.markBusy();
@@ -122,6 +135,19 @@ export class InferenceEngine {
     } catch (error) {
       throw new Error(`Failed to create session: ${error.message}`);
     }
+  }
+
+  /**
+   * Get or create dedicated chat session (for interactive chat)
+   * This session persists across multiple turns and is not shared
+   */
+  async getChatSession() {
+    if (!this.chatSession) {
+      this.chatSession = await this.createSession();
+      // Keep it permanently busy so it won't be reused by other requests
+      this.chatSession.busy = true;
+    }
+    return this.chatSession;
   }
 
   /**
@@ -216,13 +242,12 @@ export class InferenceEngine {
         topK: params.topK,
         repeatPenalty: params.repeatPenalty,
         maxTokens: params.maxTokens,
-        onToken: (tokens) => {
-          // v3 API returns array of tokens, convert to string
-          const chunk = Array.isArray(tokens) ? tokens.join('') : tokens;
-          totalText += chunk;
-          totalTokens++;
+        onTextChunk: (text) => {
+          // v3 API returns decoded text chunks directly
+          totalText += text;
+          totalTokens++; // Approximate - each chunk may contain multiple tokens
           if (onToken) {
-            onToken(chunk, totalTokens);
+            onToken(text, totalTokens);
           }
         },
       });
@@ -246,6 +271,62 @@ export class InferenceEngine {
       if (managedSession) {
         this.releaseSession(managedSession);
       }
+    }
+  }
+
+  /**
+   * Generate chat response (streaming) using dedicated chat session
+   * Automatically maintains conversation history across turns
+   * @param {string} userMessage - The user's message
+   * @param {Function} onToken - Callback for each generated text chunk
+   * @param {Object} options - Inference parameters
+   * @returns {Promise<Object>} Generation metadata
+   */
+  async chatStream(userMessage, onToken, options = {}) {
+    const startTime = Date.now();
+    let totalText = '';
+    let totalTokens = 0;
+
+    try {
+      // Get dedicated chat session (persistent across turns)
+      const managedSession = await this.getChatSession();
+
+      // Merge parameters
+      const params = {
+        ...this.defaultParams,
+        ...options,
+      };
+
+      // Perform streaming inference (v3 API)
+      // Session automatically handles conversation history
+      await managedSession.session.prompt(userMessage, {
+        temperature: params.temperature,
+        topP: params.topP,
+        topK: params.topK,
+        repeatPenalty: params.repeatPenalty,
+        maxTokens: params.maxTokens,
+        onTextChunk: (text) => {
+          totalText += text;
+          totalTokens++;
+          if (onToken) {
+            onToken(text, totalTokens);
+          }
+        },
+      });
+
+      const endTime = Date.now();
+      const duration = (endTime - startTime) / 1000;
+      const tokensPerSecond = Math.round(totalTokens / duration);
+
+      return {
+        tokens: totalTokens,
+        duration,
+        tokensPerSecond,
+        sessionId: managedSession.id,
+      };
+
+    } catch (error) {
+      throw new Error(`Chat streaming failed: ${error.message}`);
     }
   }
 
