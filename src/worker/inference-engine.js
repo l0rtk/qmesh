@@ -1,17 +1,19 @@
 /**
  * Inference Engine Module
  * Manages LLM contexts and handles inference requests
+ * Updated for node-llama-cpp v3 API
  */
 
-import { LlamaContext } from 'node-llama-cpp';
+import { LlamaChatSession } from 'node-llama-cpp';
 import config from '../config/default.js';
 
 /**
- * Context wrapper to track usage and state
+ * Session wrapper to track usage and state
  */
-class ManagedContext {
-  constructor(context, id) {
+class ManagedSession {
+  constructor(context, session, id) {
     this.context = context;
+    this.session = session;
     this.id = id;
     this.busy = false;
     this.createdAt = Date.now();
@@ -35,15 +37,15 @@ class ManagedContext {
   }
 
   async dispose() {
-    // node-llama-cpp contexts don't have explicit dispose
-    // Just clear the reference
+    // Clear references
+    this.session = null;
     this.context = null;
   }
 }
 
 /**
  * Inference engine class
- * Manages context pool and handles inference requests
+ * Manages session pool and handles inference requests
  */
 export class InferenceEngine {
   constructor(model, options = {}) {
@@ -52,11 +54,11 @@ export class InferenceEngine {
     }
 
     this.model = model;
-    this.contexts = [];
-    this.maxContexts = options.maxContexts ?? config.model.contextPool.maxContexts;
-    this.reuseContexts = options.reuseContexts ?? config.model.contextPool.reuseContexts;
-    this.contextTimeout = options.contextTimeout ?? config.model.contextPool.contextTimeout;
-    this.contextIdCounter = 0;
+    this.sessions = [];
+    this.maxSessions = options.maxContexts ?? config.model.contextPool.maxContexts;
+    this.reuseSessions = options.reuseContexts ?? config.model.contextPool.reuseContexts;
+    this.sessionTimeout = options.contextTimeout ?? config.model.contextPool.contextTimeout;
+    this.sessionIdCounter = 0;
 
     // Default inference parameters
     this.defaultParams = {
@@ -73,55 +75,60 @@ export class InferenceEngine {
   }
 
   /**
-   * Get or create an available context
+   * Get or create an available session
    */
-  async getAvailableContext() {
-    // Try to find an available context
-    if (this.reuseContexts) {
-      const availableContext = this.contexts.find(ctx => !ctx.busy);
-      if (availableContext) {
-        availableContext.markBusy();
-        return availableContext;
+  async getAvailableSession() {
+    // Try to find an available session
+    if (this.reuseSessions) {
+      const availableSession = this.sessions.find(s => !s.busy);
+      if (availableSession) {
+        availableSession.markBusy();
+        return availableSession;
       }
     }
 
-    // Create new context if under limit
-    if (this.contexts.length < this.maxContexts) {
-      return await this.createContext();
+    // Create new session if under limit
+    if (this.sessions.length < this.maxSessions) {
+      return await this.createSession();
     }
 
-    // No available contexts and at max capacity
-    throw new Error('No available contexts. All contexts are busy.');
+    // No available sessions and at max capacity
+    throw new Error('No available sessions. All sessions are busy.');
   }
 
   /**
-   * Create a new context
+   * Create a new session
    */
-  async createContext() {
-    const contextId = ++this.contextIdCounter;
+  async createSession() {
+    const sessionId = ++this.sessionIdCounter;
 
     try {
-      const context = new LlamaContext({
-        model: this.model,
+      // Create context from model (v3 API)
+      const context = await this.model.createContext({
         contextSize: this.defaultParams.contextSize,
       });
 
-      const managedContext = new ManagedContext(context, contextId);
-      managedContext.markBusy();
-      this.contexts.push(managedContext);
+      // Create chat session (v3 API)
+      const session = new LlamaChatSession({
+        contextSequence: context.getSequence(),
+      });
 
-      return managedContext;
+      const managedSession = new ManagedSession(context, session, sessionId);
+      managedSession.markBusy();
+      this.sessions.push(managedSession);
+
+      return managedSession;
 
     } catch (error) {
-      throw new Error(`Failed to create context: ${error.message}`);
+      throw new Error(`Failed to create session: ${error.message}`);
     }
   }
 
   /**
-   * Release a context back to the pool
+   * Release a session back to the pool
    */
-  releaseContext(managedContext) {
-    managedContext.markAvailable();
+  releaseSession(managedSession) {
+    managedSession.markAvailable();
   }
 
   /**
@@ -132,11 +139,11 @@ export class InferenceEngine {
    */
   async generate(prompt, options = {}) {
     const startTime = Date.now();
-    let managedContext = null;
+    let managedSession = null;
 
     try {
-      // Get available context
-      managedContext = await this.getAvailableContext();
+      // Get available session
+      managedSession = await this.getAvailableSession();
 
       // Merge parameters
       const params = {
@@ -144,40 +151,37 @@ export class InferenceEngine {
         ...options,
       };
 
-      // Perform inference
-      const result = await managedContext.context.evaluate(
-        managedContext.context.encode(prompt),
-        {
-          temperature: params.temperature,
-          topP: params.topP,
-          topK: params.topK,
-          repeatPenalty: params.repeatPenalty,
-          maxTokens: params.maxTokens,
-        }
-      );
-
-      // Decode the result
-      const text = managedContext.context.decode(result);
+      // Perform inference using chat session (v3 API)
+      const text = await managedSession.session.prompt(prompt, {
+        temperature: params.temperature,
+        topP: params.topP,
+        topK: params.topK,
+        repeatPenalty: params.repeatPenalty,
+        maxTokens: params.maxTokens,
+      });
 
       const endTime = Date.now();
       const duration = (endTime - startTime) / 1000;
-      const tokensPerSecond = result.length / duration;
+
+      // Estimate tokens (rough estimate based on text length)
+      const tokens = Math.ceil(text.length / 4);
+      const tokensPerSecond = Math.round(tokens / duration);
 
       return {
         text,
-        tokens: result.length,
+        tokens,
         duration,
-        tokensPerSecond: Math.round(tokensPerSecond),
-        contextId: managedContext.id,
+        tokensPerSecond,
+        sessionId: managedSession.id,
       };
 
     } catch (error) {
       throw new Error(`Inference failed: ${error.message}`);
 
     } finally {
-      // Release context back to pool
-      if (managedContext) {
-        this.releaseContext(managedContext);
+      // Release session back to pool
+      if (managedSession) {
+        this.releaseSession(managedSession);
       }
     }
   }
@@ -191,12 +195,13 @@ export class InferenceEngine {
    */
   async generateStream(prompt, onToken, options = {}) {
     const startTime = Date.now();
-    let managedContext = null;
+    let managedSession = null;
+    let totalText = '';
     let totalTokens = 0;
 
     try {
-      // Get available context
-      managedContext = await this.getAvailableContext();
+      // Get available session
+      managedSession = await this.getAvailableSession();
 
       // Merge parameters
       const params = {
@@ -204,44 +209,42 @@ export class InferenceEngine {
         ...options,
       };
 
-      // Create a simple token-by-token generator
-      // Note: node-llama-cpp v3 has different streaming API
-      // This is a simplified implementation
-      const encoded = managedContext.context.encode(prompt);
-
-      const result = await managedContext.context.evaluate(encoded, {
+      // Perform streaming inference (v3 API)
+      await managedSession.session.prompt(prompt, {
         temperature: params.temperature,
         topP: params.topP,
         topK: params.topK,
         repeatPenalty: params.repeatPenalty,
         maxTokens: params.maxTokens,
-        onToken: (token) => {
-          const text = managedContext.context.decode([token]);
+        onToken: (tokens) => {
+          // v3 API returns array of tokens, convert to string
+          const chunk = Array.isArray(tokens) ? tokens.join('') : tokens;
+          totalText += chunk;
           totalTokens++;
           if (onToken) {
-            onToken(text, totalTokens);
+            onToken(chunk, totalTokens);
           }
         },
       });
 
       const endTime = Date.now();
       const duration = (endTime - startTime) / 1000;
-      const tokensPerSecond = totalTokens / duration;
+      const tokensPerSecond = Math.round(totalTokens / duration);
 
       return {
         tokens: totalTokens,
         duration,
-        tokensPerSecond: Math.round(tokensPerSecond),
-        contextId: managedContext.id,
+        tokensPerSecond,
+        sessionId: managedSession.id,
       };
 
     } catch (error) {
       throw new Error(`Streaming inference failed: ${error.message}`);
 
     } finally {
-      // Release context back to pool
-      if (managedContext) {
-        this.releaseContext(managedContext);
+      // Release session back to pool
+      if (managedSession) {
+        this.releaseSession(managedSession);
       }
     }
   }
@@ -251,47 +254,47 @@ export class InferenceEngine {
    */
   getStats() {
     return {
-      totalContexts: this.contexts.length,
-      busyContexts: this.contexts.filter(ctx => ctx.busy).length,
-      availableContexts: this.contexts.filter(ctx => !ctx.busy).length,
-      maxContexts: this.maxContexts,
-      contexts: this.contexts.map(ctx => ({
-        id: ctx.id,
-        busy: ctx.busy,
-        requestCount: ctx.requestCount,
-        idleTime: ctx.getIdleTime(),
+      totalSessions: this.sessions.length,
+      busySessions: this.sessions.filter(s => s.busy).length,
+      availableSessions: this.sessions.filter(s => !s.busy).length,
+      maxSessions: this.maxSessions,
+      sessions: this.sessions.map(s => ({
+        id: s.id,
+        busy: s.busy,
+        requestCount: s.requestCount,
+        idleTime: s.getIdleTime(),
       })),
     };
   }
 
   /**
-   * Cleanup idle contexts
+   * Cleanup idle sessions
    */
-  cleanupIdleContexts() {
+  cleanupIdleSessions() {
     const now = Date.now();
     const toRemove = [];
 
-    for (const ctx of this.contexts) {
-      // Don't remove busy contexts
-      if (ctx.busy) continue;
+    for (const session of this.sessions) {
+      // Don't remove busy sessions
+      if (session.busy) continue;
 
-      // Check if context has been idle too long
-      if (now - ctx.lastUsedAt > this.contextTimeout) {
-        toRemove.push(ctx);
+      // Check if session has been idle too long
+      if (now - session.lastUsedAt > this.sessionTimeout) {
+        toRemove.push(session);
       }
     }
 
-    // Remove idle contexts
-    for (const ctx of toRemove) {
-      const index = this.contexts.indexOf(ctx);
+    // Remove idle sessions
+    for (const session of toRemove) {
+      const index = this.sessions.indexOf(session);
       if (index > -1) {
-        this.contexts.splice(index, 1);
-        ctx.dispose();
+        this.sessions.splice(index, 1);
+        session.dispose();
       }
     }
 
     if (toRemove.length > 0) {
-      console.log(`🗑️  Cleaned up ${toRemove.length} idle context(s)`);
+      console.log(`🗑️  Cleaned up ${toRemove.length} idle session(s)`);
     }
   }
 
@@ -301,7 +304,7 @@ export class InferenceEngine {
   startCleanupTimer() {
     // Run cleanup every minute
     this.cleanupTimer = setInterval(() => {
-      this.cleanupIdleContexts();
+      this.cleanupIdleSessions();
     }, 60000);
   }
 
@@ -316,24 +319,24 @@ export class InferenceEngine {
   }
 
   /**
-   * Dispose all contexts and cleanup
+   * Dispose all sessions and cleanup
    */
   async dispose() {
     this.stopCleanupTimer();
 
-    // Dispose all contexts
-    for (const ctx of this.contexts) {
-      await ctx.dispose();
+    // Dispose all sessions
+    for (const session of this.sessions) {
+      await session.dispose();
     }
 
-    this.contexts = [];
+    this.sessions = [];
     console.log('✅ Inference engine disposed');
   }
 }
 
 /**
  * Simple inference helper function
- * Creates a one-time context for quick inference
+ * Creates a one-time session for quick inference
  */
 export async function quickInference(model, prompt, options = {}) {
   const engine = new InferenceEngine(model, {

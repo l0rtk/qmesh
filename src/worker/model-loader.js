@@ -3,7 +3,7 @@
  * Loads GGUF models with automatic GPU detection and configuration
  */
 
-import { LlamaModel } from 'node-llama-cpp';
+import { getLlama } from 'node-llama-cpp';
 import { fileURLToPath } from 'url';
 import { access, constants } from 'fs/promises';
 import { join } from 'path';
@@ -54,21 +54,12 @@ export class ModelLoader {
       console.log(`🎮 GPU: Disabled (CPU only)`);
     }
 
-    // Prepare model loading options
-    const modelOptions = {
-      gpuLayers: this.gpuLayers,
-    };
-
     // Set thread count (auto-detect if not specified)
     if (this.threads === -1) {
       // Use number of physical cores, leave some for system
       const os = await import('os');
       const cores = os.cpus().length;
       this.threads = Math.max(1, cores - 2);
-    }
-
-    if (this.threads > 0) {
-      modelOptions.threads = this.threads;
     }
 
     console.log(`🧵 CPU Threads: ${this.threads}`);
@@ -79,9 +70,13 @@ export class ModelLoader {
     try {
       const startTime = Date.now();
 
-      this.model = new LlamaModel({
+      // Get llama instance (v3 API)
+      const llama = await getLlama();
+
+      // Load the model with options
+      this.model = await llama.loadModel({
         modelPath: modelPath,
-        ...modelOptions,
+        gpuLayers: this.gpuLayers,
       });
 
       const loadTime = ((Date.now() - startTime) / 1000).toFixed(1);
