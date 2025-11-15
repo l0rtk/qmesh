@@ -11,9 +11,9 @@
  *   node examples/simple-inference.js ./models/my-model.gguf   # Use specific path
  */
 
-import { detectHardware, printHardwareInfo } from '../src/lib/hardware-detector.js';
-import { ModelLoader, listAvailableModels, findModelFile } from '../src/worker/model-loader.js';
-import { InferenceEngine } from '../src/worker/inference-engine.js';
+import { detectHardware, printHardwareInfo } from '../../src/lib/hardware-detector.js';
+import { ModelLoader, listAvailableModels, findModelFile } from '../../src/worker/model-loader.js';
+import { InferenceEngine } from '../../src/worker/inference-engine.js';
 import { select } from '@inquirer/prompts';
 
 /**

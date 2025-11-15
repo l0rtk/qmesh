@@ -9,9 +9,9 @@
  *   node examples/run-worker.js [model-name-or-path]
  */
 
-import { checkSetup, loadSetupConfig } from '../src/worker/setup-wizard.js';
-import { ModelLoader, findModelFile, listAvailableModels } from '../src/worker/model-loader.js';
-import { InferenceEngine } from '../src/worker/inference-engine.js';
+import { checkSetup, loadSetupConfig } from '../../src/worker/setup-wizard.js';
+import { ModelLoader, findModelFile, listAvailableModels } from '../../src/worker/model-loader.js';
+import { InferenceEngine } from '../../src/worker/inference-engine.js';
 import { select } from '@inquirer/prompts';
 
 async function main() {

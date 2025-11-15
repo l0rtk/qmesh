@@ -10,9 +10,9 @@
  */
 
 import readline from 'readline';
-import { detectHardware } from '../src/lib/hardware-detector.js';
-import { ModelLoader, listAvailableModels, findModelFile } from '../src/worker/model-loader.js';
-import { InferenceEngine } from '../src/worker/inference-engine.js';
+import { detectHardware } from '../../src/lib/hardware-detector.js';
+import { ModelLoader, listAvailableModels, findModelFile } from '../../src/worker/model-loader.js';
+import { InferenceEngine } from '../../src/worker/inference-engine.js';
 import { select } from '@inquirer/prompts';
 
 // ANSI color codes
