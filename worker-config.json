@@ -1,0 +1,13 @@
+{
+  "modelPath": "/home/luka/qmesh/qmesh/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+  "workerId": "f253d4309269a387a347a026d80fb60a5d4c7c56a5561c8caa817bded43a5ebe",
+  "hardware": {
+    "platform": "linux x64",
+    "gpuType": "cuda",
+    "gpuLayers": 33,
+    "totalRAM": "30.5",
+    "availableDisk": "808.4",
+    "recommendedTier": "mid-range"
+  },
+  "setupDate": "2025-11-15T13:38:27.251Z"
+}
