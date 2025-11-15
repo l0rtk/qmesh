@@ -117,6 +117,7 @@ export class InferenceEngine {
       // Create chat session (v3 API)
       const sessionOptions = {
         contextSequence: context.getSequence(),
+        chatWrapper: 'auto',  // Let model auto-detect, or use 'ChatML', 'Llama3', etc.
       };
 
       // Add systemPrompt if configured
@@ -290,6 +291,12 @@ export class InferenceEngine {
     try {
       // Get dedicated chat session (persistent across turns)
       const managedSession = await this.getChatSession();
+
+      // DEBUG: Show conversation history
+      if (managedSession.session.getChatHistory) {
+        const history = managedSession.session.getChatHistory();
+        console.log('\n📜 Conversation history:', JSON.stringify(history, null, 2));
+      }
 
       // Merge parameters
       const params = {
